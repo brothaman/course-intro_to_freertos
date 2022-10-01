@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../../../../Projects/Introduction to RtOS/lecture-07-demo-semaphore"
+		},
+		{
+			"name": "LECTURE-07-CHALLENGE-SEMAPHORE",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}
