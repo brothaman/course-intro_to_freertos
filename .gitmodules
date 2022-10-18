@@ -1,0 +1,3 @@
+[submodule "Lecture/lecture_02-getting_started/lib/logger"]
+	path = Lecture/lecture_02-getting_started/lib/logger
+	url = git@github.com:brothaman/logger.git
