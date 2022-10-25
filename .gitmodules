@@ -7,3 +7,12 @@
 [submodule "Lecture/lecture_03-task_scheduling-challenge/lib/logger"]
 	path = Lecture/lecture_03-task_scheduling-challenge/lib/logger
 	url = https://github.com/brothaman/logger.git
+[submodule "Lecture/logger"]
+	path = Lecture/logger
+	url = https://github.com/brothaman/logger.git
+[submodule "Lecture/lecture_04-memory_management/lib/logger"]
+	path = Lecture/lecture_04-memory_management/lib/logger
+	url = https://github.com/brothaman/logger.git
+[submodule "Lecture/lecture_04-memory_management-challenge/lib/logger"]
+	path = Lecture/lecture_04-memory_management-challenge/lib/logger
+	url = git@github.com:brothaman/logger.git
