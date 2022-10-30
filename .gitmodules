@@ -16,3 +16,9 @@
 [submodule "Lecture/lecture_04-memory_management-challenge/lib/logger"]
 	path = Lecture/lecture_04-memory_management-challenge/lib/logger
 	url = git@github.com:brothaman/logger.git
+[submodule "Lecture/lecture_05-queue/lib/logger"]
+	path = Lecture/lecture_05-queue/lib/logger
+	url = git@github.com:brothaman/logger.git
+[submodule "Lecture/lecture_05-queue-challenge/lib/logger"]
+	path = Lecture/lecture_05-queue-challenge/lib/logger
+	url = https://github.com/brothaman/logger.git
