@@ -22,3 +22,6 @@
 [submodule "Lecture/lecture_05-queue-challenge/lib/logger"]
 	path = Lecture/lecture_05-queue-challenge/lib/logger
 	url = https://github.com/brothaman/logger.git
+[submodule "Lecture/lecture_06-mutex/lib/logger"]
+	path = Lecture/lecture_06-mutex/lib/logger
+	url = https://github.com/brothaman/logger.git

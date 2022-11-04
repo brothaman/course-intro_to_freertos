@@ -51,7 +51,7 @@ void taskSerialMonitor(void * parameters)
   char input_buffer[32] = {'\0'};
   int inc = 0;
   // String output_buffer;
-  int delay = 0;
+  int delay = 0; 
   bool b_updated;
 
   // print string to terminal

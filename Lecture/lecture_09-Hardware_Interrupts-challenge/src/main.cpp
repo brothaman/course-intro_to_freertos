@@ -1,4 +1,9 @@
 #include <Arduino.h>
+#include "Log.h"
+
+// instantiate the logger
+Log<HardwareSerial> * serial_logger = NULL;
+using LogLevel = Log<HardwareSerial>::eLogLevel;
 
 // Use only one core for demo purposes
 #if CONFIG_FREERTOS_UNICORE
@@ -28,23 +33,26 @@
 
 // Macros 
 #define BAUDRATE 115200
-#define DEBUG 1
 
 // GLOBAL VARIABLES
-float average;
+static float g_average;
+static SemaphoreHandle_t mutex = NULL;
 volatile int adc_pin = A0;
-uint16_t adc_value;
+volatile uint16_t adc_value;
+
+// variables for timer
 static const uint16_t timer_divider = 80;
 static const uint64_t timer_max_count = 1000000;
 static hw_timer_t *timer = NULL; 
 static TimerHandle_t adc_update_timer = NULL;
+
+// variables for circular buffer
 static QueueHandle_t adc_update_queue1 = NULL;
 static QueueHandle_t adc_update_queue2 = NULL;
 static QueueHandle_t avg_update_queue = NULL;
 static const uint8_t queue_len = 10;
 
 // global variable to store the average
-// create a semaphore with a maximum value of 10
 // create a buffer to store 10 values from task A (reading the ADC)
 // create a buffer to store 10 values from task B (calculating the average)
 // create an array of function pointers that the terminal has available (avg)
@@ -55,90 +63,75 @@ float getAverage();
 void setAverage(float);
 uint8_t interpretInput(char *, int);
 void sampleADCCallback(TimerHandle_t xTimer);
-bool parseTerminalInput(String);
+bool parseTerminalInput(const char *);
 
-// // callback
-// void sampleADCCallback(TimerHandle_t xTimer)
-// {
-//   if (DEBUG)
-//     Serial.println("Getting ADC value");
-
-//   // read the ADC value and update the array
-//   adc_value = analogRead(adc_pin);
-
-//   // store the value in the queue
-//   if (xQueueSend(adc_update_queue1, (void*)&adc_value, 10) != pdTRUE && DEBUG)
-//   {
-//     // once queue is full call task A to calculate the average
-//     Serial.println("DEBUG WARN: Queue full");
-//   }
-// }
-
-// test
-volatile int isrbufpos = 0;
-int taskbufpos = 0;
-volatile uint16_t buf[10];
-static SemaphoreHandle_t sem[10] = {NULL}; // semaphore with 10 spots
 // ISR --- Configure interrupt service routine
-void IRAM_ATTR onTimer() {
-  //
+void IRAM_ATTR onTimer() 
+{
   BaseType_t xTaskWoken = pdFALSE;
 
   //perform action (read from ADC)
-  // uint16_t val = analogRead(adc_pin);
+  uint16_t val = analogRead(adc_pin);
 
-  // // store the value in the queue
-  // if (xQueueSendFromISR(adc_update_queue1, (void*)&val, &xTaskWoken) != pdTRUE && DEBUG)
-  // {
-  //   // once queue is full call task A to calculate the average
-  //   Serial.println("DEBUG WARN: Queue 1 full");
-  // }
-  buf[isrbufpos] = analogRead(adc_pin);
-  xSemaphoreGiveFromISR(sem[isrbufpos], &xTaskWoken);
-  isrbufpos++;
-  if (isrbufpos == 10)
-    isrbufpos = 0;
-  
+  // store the value in the queue
+  xQueueSendFromISR(adc_update_queue1, (void*)&val, &xTaskWoken);
 
-  // try to add to a buffer
   // Exit from ISR
   if (xTaskWoken)
     portYIELD_FROM_ISR();
 }
 
-// task A
-void taskCalculateAverage(void * parameters)
-{     
-  // create a variable to stroe the adc value
-  float avg_adc_value;
-  uint16_t adc_value;
-  int i = 0;
+/**
+ * Task A
+ * 
+ * @brief after 10 samples have been collected wake up and compute the average
+ */
+void vTaskA_CalculateAvg(void * parameters)
+{
+  // a buffer to store all data from the the queue
+  int adc_values[10] = {0};
 
+  // variable for local average
+  float _average;
+
+  // Print to terminal that task handler is running
+  serial_logger->logln("Task A 'Calculating Average' is running", LogLevel::kInfo);
+  
   // print to the terminal that the task to calculate the average is running
-  if (DEBUG)
-    Serial.println("Task 'Calculate Average' is running");
-
-  while (i < 10)
+  while (1)
   {
-    // get the data stored in the queue
-    if (xQueueReceive(adc_update_queue2, (void*)&adc_value, 0) == pdTRUE)
+    // check to see if there are 10 items in queue
+    if (uxQueueMessagesWaiting(adc_update_queue2) == 10)
     {
-      avg_adc_value+=(float)adc_value;
-      i++;
+      for (int i = 0; i<10; i++)
+        xQueueReceive(adc_update_queue2, (void *)(adc_values + i), portMAX_DELAY);
+      
+      // calculate the average
+      _average = 0;
+      for (int i = 0; i < 10; i++)
+        _average += adc_values[i];
+      _average = _average / 10;
+
+      // gain protected access to the global average variable
+      xSemaphoreTake(mutex, 0);
+      g_average = _average;
+      xSemaphoreGive(mutex);
+      serial_logger->logln("Finished calculating the average", LogLevel::kInfo);
     }
+    vTaskDelay(50 / portTICK_PERIOD_MS);
   }
-  // take semaphore
-  average = avg_adc_value / 10;
-  // give semaphore
-  // exit task
 }
 
 // task B - serial terminal
-void taskSerialTerminal(void * parameters)
+void vTaskB_SerialTerminal(void * parameters)
 {
-  // print to terminal that the serial terminal is running
-  Serial.println("Task 'Serial Terminal' is running");
+  // character buffer for serial input
+  char buf[64] = {0};
+  int length;
 
+  // Print to terminal that task handler is running
+  serial_logger->logln("Task B 'Serial Terminal' is running", LogLevel::kInfo);
+  
   // run continuously
   while (1)
   {
@@ -146,87 +139,53 @@ void taskSerialTerminal(void * parameters)
     if (Serial.available() > 0)
     {
       // add the adc value to the array
-      String strBuf = Serial.readString();
+      length = Serial.readBytesUntil('\n', buf, 64);
+      buf[length] = '\0';
 
       // pass the string into the parser
-      if (!strBuf.isEmpty() && !parseTerminalInput(strBuf))
+      if (!parseTerminalInput(buf))
       {
-        Serial.println(strBuf);
+        Serial.println(buf);
       }
     }
+
+    // wait for a bit and allow other task to run
+    vTaskDelay(50 / portTICK_PERIOD_MS);
   }
 }
 
 // TASk C queue shuffler
-void taskQueueHandler(void * parameters)
+void vTaskC_CircularBuffer(void * parameters)
 {
   // variable to store the value being shuffled
   uint16_t uiVal;
   BaseType_t handshake = pdFALSE;
 
   // Print to terminal that task handler is running
-  Serial.println("Task 'Queue Handler' is running");
+  serial_logger->logln("Task 'Queue Handler' is running", LogLevel::kInfo);
+  
   // Loop continuously
   while (1)
   {
-    // take from queue 1 without blocking
-    Serial.print("Queue has:  ");
-    UBaseType_t uxMsgsInQ = uxQueueMessagesWaiting(adc_update_queue1);
-    Serial.print(uxMsgsInQ);
-    Serial.println("   messages in queue.");
-    if (!handshake && xSemaphoreTake(sem[taskbufpos], portMAX_DELAY))
+    if (xQueueReceive(adc_update_queue1, (void *) &uiVal, 0) == pdTRUE)
     {
-      // copy the value from the buffer
-      uiVal = buf[taskbufpos];
-      handshake = !handshake;
+      xQueueSend(adc_update_queue2, (void*)&uiVal, portTICK_PERIOD_MS);
     }
-    if (handshake && xQueueSend(adc_update_queue2, (void*)&uiVal, 0))
+    else
     {
-      handshake = !handshake;
-
-      // move the buffer position forward
-      taskbufpos++;
-    }
-    // if (xQueueReceive(adc_update_queue1, (void *) &uiVal, 0) == pdTRUE)
-    // {
-    //   if (xQueueSend(adc_update_queue2, (void*)&uiVal, 10) != pdTRUE)
-    //   {
-    //     Serial.println("Queue 2 Full");
-    //   }
-    //   else
-    //   {
-    //     i++;
-    //   }
-    // }
-    if (taskbufpos == 10)
-    {
-      Serial.println("Starting up task to calculate average");
-      // start Task A to calculate the average
-      xTaskCreatePinnedToCore(taskCalculateAverage,
-                              "Calculate Average",
-                              1024,
-                              NULL,
-                              2,
-                              NULL,
-                              app_cpu
-      );
-      taskbufpos = 0;
+      vTaskDelay(50 / portTICK_PERIOD_MS);
     }
   }
 }
 
 // function to parse the terminal input
-bool parseTerminalInput(String strBuf)
+bool parseTerminalInput(const char * string)
 {
   // return variable initialized as false
   bool bRet =  false;
 
-  // convert the string to upper case (!!!modifies string in place!!!) 
-  strBuf.toUpperCase();
-  strBuf.trim();
-
   // check if the string is a command
-  if (strBuf.compareTo("AVG") == 0)
+  if (strcmp(string, "AVG") == 0)
   {
     // return true since command was found
     bRet =  pdTRUE;
@@ -249,6 +208,10 @@ void setup() {
   Serial.println();
   Serial.println("--- FreeRTOS Hardware Interrupts Challenge ---");
 
+  // initialize the serail logger
+  serial_logger = new Log<HardwareSerial>(&Serial);
+  serial_logger->setLogLevel(LogLevel::kWarn);
+
  // create the ADC queue
   adc_update_queue1 = xQueueCreate(queue_len, sizeof(uint16_t));
   adc_update_queue2 = xQueueCreate(queue_len, sizeof(uint16_t));
@@ -256,55 +219,49 @@ void setup() {
   // create the queue to hold the average values
   avg_update_queue = xQueueCreate(queue_len, sizeof(float));
 
-  // create the necessary semaphores
-  for (SemaphoreHandle_t s : sem)
-  {
-    s = xSemaphoreCreateBinary();
-  }
+  // initialize the semaphore
+  mutex = xSemaphoreCreateMutex();
 
-  // // Start task to handle the serial terminal
-  // if (DEBUG)
-  // {
-  //   Serial.print("Pinning Serial Terminal task to core: ");
-  //   Serial.println(app_cpu);
-  // }
-  // xTaskCreatePinnedToCore(taskSerialTerminal,
-  //                         "Serial Terminal",
-  //                         1024,
-  //                         NULL,
-  //                         2,
-  //                         NULL,
-  //                         app_cpu
-  // );
+  // create task A
+  xTaskCreatePinnedToCore(
+    vTaskA_CalculateAvg,
+    "Task A: Calculate Average",
+    1024,
+    NULL,
+    1,
+    NULL,
+    app_cpu
+  );
 
-  // Start task to handle the double buffer
-  if (DEBUG)
-  {
-    Serial.print("Pinning Queue Handler task to core: ");
-    Serial.println(app_cpu);
-  }
-  xTaskCreatePinnedToCore(taskQueueHandler,
-                          "Queue handler",
-                          1024,
-                          NULL,
-                          2,
-                          NULL,
-                          app_cpu
+  // create task B: serial terminal
+  xTaskCreatePinnedToCore(
+    vTaskB_SerialTerminal,
+    "Task B: Serial Terminal",
+    1024,
+    NULL,
+    1,
+    NULL,
+    app_cpu
+  );
+
+  // create task C: circular buffer
+  xTaskCreatePinnedToCore(
+    vTaskC_CircularBuffer,
+    "Task C: Circular Buffer",
+    1024,
+    NULL,
+    1,
+    NULL,
+    app_cpu
   );
 
   // create and start timer (Num, divider, count up)
-  if (DEBUG)
-    Serial.println("Initializing timer 0");
   timer = timerBegin(0, timer_divider, true);
 
   // Provide  ISR to timer (timer, function, edge)
-  if (DEBUG)
-    Serial.println("Attaching ISR to timer");
   timerAttachInterrupt(timer, &onTimer, true);
 
   // At what count shoud ISR trigger (timer, count, autoreload)
-  if (DEBUG)
-    Serial.println("Configure timer to trigger 10 times per second 10Hz");
   timerAlarmWrite(timer, timer_max_count, true);
 
   // Allow ISR to trigger
@@ -327,5 +284,5 @@ void commandAvg()
 
 float getAverage()
 {
-  return average;
+  return g_average;
 }

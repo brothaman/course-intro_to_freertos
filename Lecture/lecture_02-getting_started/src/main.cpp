@@ -2,7 +2,7 @@
 #include "Log.h"
 
 // instantiate the logger
-Log<HardwareSerial> * serial_logger;
+Log<HardwareSerial> *serial_logger;
 
 // alias the logger type
 using LogLevel = Log<HardwareSerial>::eLogLevel;
@@ -11,7 +11,6 @@ static const BaseType_t app_cpu = 0;
 #else
 static const BaseType_t app_cpu = 1;
 #endif
-
 
 // delay value
 volatile static unsigned long _delay;
@@ -22,7 +21,7 @@ static const int g_led_pin = GPIO_NUM_2;
 static const int b_led_pin = GPIO_NUM_4;
 static const int pot_pin = A0;
 
-void blinkRGB(int delay=500)
+void blinkRGB(int delay = 500)
 {
 	if (delay > 1000)
 		delay = 1000;
@@ -51,31 +50,29 @@ void toggleLED(void *parameters)
 	}
 }
 
-
 // task to update delay with potentiometer value
-void updateDelay(void * parameters)
+void updateDelay(void *parameters)
 {
 	String str_output;
 	while (1)
 	{
 		// update the delay value
-		_delay = analogRead(pot_pin)/4;
-		str_output = String("ADC Value: ") + _delay; 
-		serial_logger->log( str_output.c_str(), LogLevel::kTrace);
-		
+		_delay = analogRead(pot_pin) / 4;
+		str_output = String("ADC Value: ") + _delay;
+		serial_logger->log(str_output.c_str(), LogLevel::kTrace);
+
 		// delay for a time to allow the blink task to run
 		vTaskDelay(250 / portTICK_PERIOD_MS);
 	}
 }
 
 void setup()
-{	
+{
 	// initialize the pins for output
 	pinMode(r_led_pin, OUTPUT);
 	pinMode(g_led_pin, OUTPUT);
 	pinMode(b_led_pin, OUTPUT);
 	pinMode(pot_pin, INPUT);
-
 
 	// initialize the serial port
 	Serial.begin(115200);
@@ -104,8 +101,7 @@ void setup()
 		NULL,
 		1,
 		NULL,
-		app_cpu
-	);
+		app_cpu);
 
 	// create the toggleLED task
 	xTaskCreatePinnedToCore(
@@ -115,9 +111,8 @@ void setup()
 		NULL,
 		1,
 		NULL,
-		app_cpu
-	);
-	
+		app_cpu);
+
 	vTaskDelete(NULL);
 }
 
